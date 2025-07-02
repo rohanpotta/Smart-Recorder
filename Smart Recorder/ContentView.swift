@@ -10,52 +10,35 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Query private var sessions: [RecordingSession]
+
+    @StateObject private var recorder = AudioRecorder()
 
     var body: some View {
-        NavigationSplitView {
+        VStack {
+            Button(recorder.isRecording ? "Stop Recording" : "Start Recording") {
+                if recorder.isRecording {
+                    recorder.stopRecording()
+                } else {
+                    recorder.startRecording(modelContext: modelContext)
+                }
+            }
+            .padding()
+            .background(recorder.isRecording ? Color.red : Color.green)
+            .foregroundColor(.white)
+            .clipShape(Capsule())
+
             List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                ForEach(sessions) { session in
+                    VStack(alignment: .leading) {
+                        Text("Session on \(session.date.formatted(date: .abbreviated, time: .shortened))")
+                        Text("Segments: \(session.segments.count)")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
                     }
                 }
             }
-        } detail: {
-            Text("Select an item")
         }
+        .padding()
     }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
-    }
-}
-
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
