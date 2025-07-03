@@ -18,6 +18,9 @@ class AudioRecorder: ObservableObject {
     private var currentSession: RecordingSession?
     private var currentSegmentFileURL: URL?
     private var currentSegmentStartTime: Date?
+    private var transcriptionTasks = [UUID: String]()
+    private let assemblyAIKey = "38e350428c5b457894a802dcbf4e0b6f"
+    private let urlSession = URLSession.shared
 
     @Published var isRecording = false
 
@@ -147,5 +150,115 @@ class AudioRecorder: ObservableObject {
             self.currentSegmentFileURL = nil
             self.currentSegmentStartTime = nil
         }
+    }
+    
+    func transcribeSegment(_ segment: AudioSegment, modelContext: ModelContext) {
+        Task {
+            let filePath = segment.filePath
+            let segmentID = segment.id
+
+            do {
+                let uploadURL = try await uploadAudioFile(URL(fileURLWithPath: filePath))
+                let transcriptID = try await requestTranscription(audioURL: uploadURL)
+                let transcriptText = try await pollTranscriptionResult(transcriptID: transcriptID)
+
+                await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
+
+            } catch {
+                print("Error for segment \(segmentID): \(error)")
+                await markTranscriptionFailed(for: segment, modelContext: modelContext)
+            }
+        }
+    }
+    
+    func uploadAudioFile(_ fileURL: URL) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.assemblyai.com/v2/upload")!)
+        request.httpMethod = "POST"
+        request.setValue(assemblyAIKey, forHTTPHeaderField: "authorization")
+
+        let audioData = try Data(contentsOf: fileURL)
+        
+        let (data, response) = try await urlSession.upload(for: request, from: audioData)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw NSError(domain: "UploadFailed", code: 1, userInfo: nil)
+        }
+        
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let uploadURL = json?["upload_url"] as? String {
+            return uploadURL
+        } else {
+            throw NSError(domain: "UploadFailed", code: 2, userInfo: nil)
+        }
+    }
+
+    func requestTranscription(audioURL: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.assemblyai.com/v2/transcript")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(assemblyAIKey, forHTTPHeaderField: "authorization")
+
+        let body: [String: Any] = ["audio_url": audioURL]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await urlSession.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw NSError(domain: "TranscriptionRequestFailed", code: 1, userInfo: nil)
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let transcriptID = json?["id"] as? String {
+            return transcriptID
+        } else {
+            throw NSError(domain: "TranscriptionRequestFailed", code: 2, userInfo: nil)
+        }
+    }
+    
+    func pollTranscriptionResult(transcriptID: String) async throws -> String {
+        let url = URL(string: "https://api.assemblyai.com/v2/transcript/\(transcriptID)")!
+        var request = URLRequest(url: url)
+        request.setValue(assemblyAIKey, forHTTPHeaderField: "authorization")
+
+        while true {
+            let (data, response) = try await urlSession.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw NSError(domain: "TranscriptionPollFailed", code: 1, userInfo: nil)
+            }
+
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if let status = json?["status"] as? String {
+                switch status {
+                case "completed":
+                    return json?["text"] as? String ?? ""
+                case "error":
+                    throw NSError(domain: "TranscriptionError", code: 1, userInfo: nil)
+                default:
+                    // Still processing; wait before polling again
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                }
+            } else {
+                throw NSError(domain: "InvalidResponse", code: 1, userInfo: nil)
+            }
+        }
+    }
+    
+    @MainActor
+    func applyTranscription(_ transcriptText: String, to segment: AudioSegment, modelContext: ModelContext) {
+        let transcription = Transcription(text: transcriptText, status: "completed")
+        segment.transcription = transcription
+        modelContext.insert(transcription)
+        modelContext.insert(segment)
+        try? modelContext.save()
+    }
+
+    @MainActor
+    func markTranscriptionFailed(for segment: AudioSegment, modelContext: ModelContext) {
+        segment.transcription?.status = "failed"
+        try? modelContext.save()
     }
 }

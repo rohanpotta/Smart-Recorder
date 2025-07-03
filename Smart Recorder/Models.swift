@@ -30,7 +30,7 @@ class AudioSegment {
     var startTime: Date
     var duration: TimeInterval
     var filePath: String
-    @Relationship var transcription: Transcription
+    @Relationship var transcription: Transcription?
     var recordingSession: RecordingSession?
 
     init(id: UUID = UUID(), startTime: Date, duration: TimeInterval, filePath: String, transcription: Transcription = Transcription(), recordingSession: RecordingSession? = nil) {
