@@ -12,11 +12,14 @@ import SwiftData
 class RecordingSession {
     var id: UUID
     var date: Date
+    var filePath: String
+    @Relationship(deleteRule: .cascade, inverse: \AudioSegment.recordingSession)
     var segments: [AudioSegment]
-
-    init(id: UUID = UUID(), date: Date = Date(), segments: [AudioSegment] = []) {
+    
+    init(id: UUID = UUID(), date: Date = Date(), filePath: String, segments: [AudioSegment] = []) {
         self.id = id
         self.date = date
+        self.filePath = filePath
         self.segments = segments
     }
 }
@@ -26,14 +29,15 @@ class AudioSegment {
     var id: UUID
     var startTime: Date
     var duration: TimeInterval
-    var fileURL: URL
-    var transcription: Transcription?
+    var filePath: String
+    @Relationship var transcription: Transcription
+    var recordingSession: RecordingSession?
 
-    init(id: UUID = UUID(), startTime: Date, duration: TimeInterval, fileURL: URL, transcription: Transcription? = nil) {
+    init(id: UUID = UUID(), startTime: Date, duration: TimeInterval, filePath: String, transcription: Transcription = Transcription()) {
         self.id = id
         self.startTime = startTime
         self.duration = duration
-        self.fileURL = fileURL
+        self.filePath = filePath
         self.transcription = transcription
     }
 }
@@ -42,12 +46,17 @@ class AudioSegment {
 class Transcription {
     var id: UUID
     var text: String
-    var status: TranscriptionStatus
+    var status: String
 
-    init(id: UUID = UUID(), text: String, status: TranscriptionStatus = .pending) {
+    init(id: UUID = UUID(), text: String = "", status: String = "pending") {
         self.id = id
         self.text = text
         self.status = status
+    }
+
+    var statusEnum: TranscriptionStatus {
+        get { TranscriptionStatus(rawValue: status) ?? .pending }
+        set { status = newValue.rawValue }
     }
 }
 

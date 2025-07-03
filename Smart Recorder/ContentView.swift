@@ -18,7 +18,7 @@ struct ContentView: View {
         VStack {
             Button(recorder.isRecording ? "Stop Recording" : "Start Recording") {
                 if recorder.isRecording {
-                    recorder.stopRecording()
+                    recorder.stopRecording(modelContext: modelContext)
                 } else {
                     recorder.startRecording(modelContext: modelContext)
                 }
