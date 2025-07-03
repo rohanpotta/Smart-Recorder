@@ -78,9 +78,11 @@ class AudioRecorder: ObservableObject {
         }
 
         // Schedule timer to split after 30 seconds
-        segmentTimer?.invalidate()
-        segmentTimer = Timer.scheduledTimer(withTimeInterval: segmentDuration, repeats: false) { _ in
-            self.finishCurrentSegmentAndStartNew(modelContext: modelContext)
+        DispatchQueue.main.async {
+            self.segmentTimer?.invalidate()
+            self.segmentTimer = Timer.scheduledTimer(withTimeInterval: self.segmentDuration, repeats: false) { _ in
+                self.finishCurrentSegmentAndStartNew(modelContext: modelContext)
+            }
         }
     }
     
@@ -144,13 +146,6 @@ class AudioRecorder: ObservableObject {
             self.currentSession = nil
             self.currentSegmentFileURL = nil
             self.currentSegmentStartTime = nil
-        }
-    }
-
-    private func startSegmentTimer(modelContext: ModelContext, fileURL: URL) {
-        segmentTimer = Timer.scheduledTimer(withTimeInterval: segmentDuration, repeats: true) { _ in
-            // TODO: Save segment to SwiftData and start a new file
-            print("Segment timer fired - save audio chunk")
         }
     }
 }
