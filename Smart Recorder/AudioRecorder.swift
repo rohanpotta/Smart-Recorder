@@ -142,9 +142,6 @@ class AudioRecorder: ObservableObject {
                 let segment = AudioSegment(startTime: segmentStart, duration: segmentDuration, filePath: fileURL.path)
                 session.segments.append(segment)
                 modelContext.insert(segment)
-                
-                // **Also call transcription here for the final segment**
-                self.transcribeSegment(segment, modelContext: modelContext)
             }
 
             modelContext.insert(session)
@@ -152,6 +149,12 @@ class AudioRecorder: ObservableObject {
 
             print("Recording stopped and session saved with \(session.segments.count) segments")
 
+            //Transcribe all segments (including previously recorded ones)
+            for segment in session.segments {
+                self.transcribeSegment(segment, modelContext: modelContext)
+            }
+
+            // Clear current session data
             self.currentSession = nil
             self.currentSegmentFileURL = nil
             self.currentSegmentStartTime = nil
@@ -163,16 +166,35 @@ class AudioRecorder: ObservableObject {
             let filePath = segment.filePath
             let segmentID = segment.id
 
-            do {
-                let uploadURL = try await uploadAudioFile(URL(fileURLWithPath: filePath))
-                let transcriptID = try await requestTranscription(audioURL: uploadURL)
-                let transcriptText = try await pollTranscriptionResult(transcriptID: transcriptID)
+            let maxRetries = 5
+            var attempt = 0
 
-                await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
+            while attempt < maxRetries {
+                do {
+                    print("Transcribing segment \(segmentID), attempt \(attempt + 1)")
 
-            } catch {
-                print("Error for segment \(segmentID): \(error)")
-                await markTranscriptionFailed(for: segment, modelContext: modelContext)
+                    let uploadURL = try await uploadAudioFile(URL(fileURLWithPath: filePath))
+                    let transcriptID = try await requestTranscription(audioURL: uploadURL)
+                    let transcriptText = try await pollTranscriptionResult(transcriptID: transcriptID)
+
+                    await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
+                    print("✅ Transcription succeeded for segment \(segmentID)")
+                    return // success, exit function
+
+                } catch {
+                    attempt += 1
+                    print("⚠️ Transcription failed (attempt \(attempt)) for segment \(segmentID): \(error.localizedDescription)")
+
+                    if attempt >= maxRetries {
+                        await markTranscriptionFailed(for: segment, modelContext: modelContext)
+                        print("❌ Final failure after \(maxRetries) attempts for segment \(segmentID)")
+                        return
+                    }
+
+                    // Exponential backoff delay
+                    let delay = pow(2.0, Double(attempt)) // 2^1, 2^2, ..., 2^5
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) // Convert to nanoseconds
+                }
             }
         }
     }
