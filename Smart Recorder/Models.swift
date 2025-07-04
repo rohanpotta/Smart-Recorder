@@ -64,3 +64,27 @@ class Transcription {
 enum TranscriptionStatus: String, Codable {
     case pending, completed, failed
 }
+
+extension RecordingSession {
+    var totalDuration: TimeInterval {
+        segments.reduce(0) { $0 + $1.duration }
+    }
+
+    var transcriptionStatus: String {
+        if segments.allSatisfy({ $0.transcription?.statusEnum == .completed }) {
+            return "Completed"
+        } else if segments.contains(where: { $0.transcription?.statusEnum == .failed }) {
+            return "Failed"
+        } else {
+            return "In Progress"
+        }
+    }
+
+    var fullTranscriptionText: String {
+        segments
+            .sorted(by: { $0.startTime < $1.startTime })
+            .compactMap { $0.transcription?.text }
+            .joined(separator: " ")
+    }
+}
+

@@ -111,6 +111,9 @@ class AudioRecorder: ObservableObject {
 
         print("Saved segment starting at \(segmentStart) duration: \(segmentDuration)")
 
+        // **Call transcription here**
+        transcribeSegment(segment, modelContext: modelContext)
+
         // Start new segment recording
         do {
             try startNewSegment(modelContext: modelContext)
@@ -139,6 +142,9 @@ class AudioRecorder: ObservableObject {
                 let segment = AudioSegment(startTime: segmentStart, duration: segmentDuration, filePath: fileURL.path)
                 session.segments.append(segment)
                 modelContext.insert(segment)
+                
+                // **Also call transcription here for the final segment**
+                self.transcribeSegment(segment, modelContext: modelContext)
             }
 
             modelContext.insert(session)
