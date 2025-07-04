@@ -25,10 +25,14 @@ struct Smart_RecorderApp: App {
         }
     }()
 
+    // Create a single shared AudioRecorder instance
+    @StateObject private var recorder = AudioRecorder()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+                RootView()
+                .environmentObject(recorder)            // pass recorder as EnvironmentObject
+                .environment(\.modelContext, sharedModelContainer.mainContext)  // pass modelContext
         }
-        .modelContainer(sharedModelContainer)
     }
 }

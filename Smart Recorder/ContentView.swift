@@ -12,7 +12,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var sessions: [RecordingSession]
 
-    @StateObject private var recorder = AudioRecorder()
+    @EnvironmentObject var recorder: AudioRecorder
 
     var body: some View {
         NavigationStack {

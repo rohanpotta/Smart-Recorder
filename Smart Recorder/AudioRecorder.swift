@@ -8,6 +8,7 @@
 import AVFoundation
 import SwiftData
 import Combine
+import Speech
 
 class AudioRecorder: ObservableObject {
     private let engine = AVAudioEngine()
@@ -23,6 +24,28 @@ class AudioRecorder: ObservableObject {
     private let urlSession = URLSession.shared
 
     @Published var isRecording = false
+    
+    init() {
+        // Observe audio interruptions
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        // Observe route changes (e.g. headphones unplugged)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func startRecording(modelContext: ModelContext) {
         AVAudioApplication.requestRecordPermission { granted in
@@ -171,33 +194,38 @@ class AudioRecorder: ObservableObject {
 
             while attempt < maxRetries {
                 do {
-                    print("Transcribing segment \(segmentID), attempt \(attempt + 1)")
+                    print("🛰️ Transcribing remotely (attempt \(attempt + 1)) for segment \(segmentID)")
 
                     let uploadURL = try await uploadAudioFile(URL(fileURLWithPath: filePath))
                     let transcriptID = try await requestTranscription(audioURL: uploadURL)
                     let transcriptText = try await pollTranscriptionResult(transcriptID: transcriptID)
 
                     await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
-                    print("✅ Transcription succeeded for segment \(segmentID)")
-                    return // success, exit function
-
+                    print("✅ Remote transcription succeeded for segment \(segmentID)")
+                    return
                 } catch {
                     attempt += 1
-                    print("⚠️ Transcription failed (attempt \(attempt)) for segment \(segmentID): \(error.localizedDescription)")
+                    print("⚠️ Remote transcription failed (attempt \(attempt)) for segment \(segmentID): \(error.localizedDescription)")
 
-                    if attempt >= maxRetries {
-                        await markTranscriptionFailed(for: segment, modelContext: modelContext)
-                        print("❌ Final failure after \(maxRetries) attempts for segment \(segmentID)")
-                        return
-                    }
-
-                    // Exponential backoff delay
-                    let delay = pow(2.0, Double(attempt)) // 2^1, 2^2, ..., 2^5
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) // Convert to nanoseconds
+                    // Backoff before retry
+                    let delay = pow(2.0, Double(attempt)) // 2, 4, 8, etc.
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
+            }
+
+            // Fallback after 5 failed attempts
+            print("🔁 Falling back to local transcription for segment \(segmentID)")
+            do {
+                let transcriptText = try await transcribeLocal(URL(fileURLWithPath: filePath))
+                await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
+                print("✅ Local transcription succeeded for segment \(segmentID)")
+            } catch {
+                await markTranscriptionFailed(for: segment, modelContext: modelContext)
+                print("❌ Local transcription also failed for segment \(segmentID): \(error.localizedDescription)")
             }
         }
     }
+
     
     func uploadAudioFile(_ fileURL: URL) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.assemblyai.com/v2/upload")!)
@@ -272,6 +300,80 @@ class AudioRecorder: ObservableObject {
             } else {
                 throw NSError(domain: "InvalidResponse", code: 1, userInfo: nil)
             }
+        }
+    }
+    
+    func transcribeLocal(_ url: URL) async throws -> String {
+        let recognizer = SFSpeechRecognizer()
+        let request = SFSpeechURLRecognitionRequest(url: url)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            recognizer?.recognitionTask(with: request) { result, error in
+                if let result = result, result.isFinal {
+                    continuation.resume(returning: result.bestTranscription.formattedString)
+                } else if let error = error {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    func pauseRecording() {
+        if engine.isRunning {
+            engine.pause()
+            print("⏸️ Recording paused")
+        }
+    }
+
+    func resumeRecording() {
+        do {
+            try engine.start()
+            print("▶️ Recording resumed")
+        } catch {
+            print("Failed to resume recording: \(error)")
+        }
+    }
+    
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            print("🔕 Interruption began — pausing recording")
+            pauseRecording() // you should implement this
+        case .ended:
+            print("🔔 Interruption ended — trying to resume")
+            if let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) {
+                    resumeRecording() // you should implement this
+                }
+            }
+        @unknown default:
+            break
+        }
+    }
+    
+    @objc private func handleRouteChange(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let reasonValue = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+
+        switch reason {
+        case .oldDeviceUnavailable:
+            print("🎧 Headphones unplugged or Bluetooth disconnected")
+            pauseRecording() // optional: pause or warn user
+        case .newDeviceAvailable:
+            print("🔌 New audio route available (e.g., headphones plugged in)")
+            // Optionally resume or alert user
+        default:
+            break
         }
     }
     
