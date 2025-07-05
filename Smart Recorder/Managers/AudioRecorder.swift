@@ -11,6 +11,25 @@ import Combine
 import Speech
 import Security
 
+enum RecordingQuality: String, CaseIterable, Identifiable {
+    case low, medium, high
+    var id: Self { self }
+    var displayName: String {
+        switch self {
+        case .low:    "Low"
+        case .medium: "Medium"
+        case .high:   "High"
+        }
+    }
+    var sampleRate: Double {
+        switch self {
+        case .low:    12_000
+        case .medium: 24_000
+        case .high:   44_100
+        }
+    }
+}
+
 class AudioRecorder: ObservableObject {
     private let engine = AVAudioEngine()
     private let session = AVAudioSession.sharedInstance()
@@ -28,6 +47,8 @@ class AudioRecorder: ObservableObject {
     private let urlSession = URLSession.shared
 
     @Published var isRecording = false
+    @Published var audioLevel: Float = 0
+    @Published var recordingQuality: RecordingQuality = .high
     
     init() {
         // Observe audio interruptions
@@ -90,7 +111,9 @@ class AudioRecorder: ObservableObject {
         let inputNode = self.engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
-        self.audioFile = try AVAudioFile(forWriting: fileURL, settings: format.settings)
+        var fileSettings = format.settings
+        fileSettings[AVSampleRateKey as String] = recordingQuality.sampleRate
+        self.audioFile = try AVAudioFile(forWriting: fileURL, settings: fileSettings)
 
         inputNode.removeTap(onBus: 0) // Remove previous tap if any
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
@@ -99,6 +122,13 @@ class AudioRecorder: ObservableObject {
                 print("Writing buffer...")
             } catch {
                 print("Error writing buffer: \(error)")
+            }
+            if let channelData = buffer.floatChannelData?[0] {
+                let values = UnsafeBufferPointer(start: channelData,
+                                                  count: Int(buffer.frameLength))
+                let rms = sqrt(values.map { $0 * $0 }.reduce(0, +) / Float(buffer.frameLength))
+                let level = min(max(rms * 20, 0), 1)
+                DispatchQueue.main.async { self.audioLevel = level }
             }
         }
 
@@ -353,13 +383,13 @@ class AudioRecorder: ObservableObject {
         switch type {
         case .began:
             print("🔕 Interruption began — pausing recording")
-            pauseRecording() // you should implement this
+            pauseRecording()
         case .ended:
             print("🔔 Interruption ended — trying to resume")
             if let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt {
                 let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                 if options.contains(.shouldResume) {
-                    resumeRecording() // you should implement this
+                    resumeRecording()
                 }
             }
         @unknown default:
@@ -377,10 +407,10 @@ class AudioRecorder: ObservableObject {
         switch reason {
         case .oldDeviceUnavailable:
             print("🎧 Headphones unplugged or Bluetooth disconnected")
-            pauseRecording() // optional: pause or warn user
+            pauseRecording()
         case .newDeviceAvailable:
             print("🔌 New audio route available (e.g., headphones plugged in)")
-            // Optionally resume or alert user
+            
         default:
             break
         }
