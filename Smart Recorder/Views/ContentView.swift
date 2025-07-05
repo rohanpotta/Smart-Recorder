@@ -18,6 +18,8 @@ struct ContentView: View {
 
     @State private var searchText = ""
     @State private var elapsedSeconds = 0
+    @State private var showingAlert = false
+    @State private var alertMessage = ""
 
     private var elapsedString: String {
         String(format: "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
@@ -56,6 +58,12 @@ struct ContentView: View {
                     if recorder.isRecording {
                         recorder.stopRecording(modelContext: modelContext)
                     } else {
+                        // Check for API key before starting
+                        if KeychainHelper.shared.get(key: "assemblyAIKey")?.isEmpty != false {
+                            alertMessage = "Please set your AssemblyAI API key in Settings before recording."
+                            showingAlert = true
+                            return
+                        }
                         recorder.startRecording(modelContext: modelContext)
                     }
                 }
@@ -159,6 +167,20 @@ struct ContentView: View {
             .onDisappear {
                 timer?.invalidate()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .microphonePermissionDenied)) { _ in
+                alertMessage = "Microphone permission is required to record audio. Please enable it in Settings."
+                showingAlert = true
+            }
+            .alert("Error", isPresented: $showingAlert) {
+                Button("OK") { }
+            } message: {
+                Text(alertMessage)
+            }
         }
     }
+}
+
+// MARK: - Notification Extensions
+extension Notification.Name {
+    static let microphonePermissionDenied = Notification.Name("microphonePermissionDenied")
 }

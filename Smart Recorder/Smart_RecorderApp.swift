@@ -45,6 +45,18 @@ struct Smart_RecorderApp: App {
                     }
                     OfflineTranscriptionManager.shared.loadPendingSegments(from: sharedModelContainer.mainContext)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                    // App going to background - save current recording state
+                    if recorder.isRecording {
+                        recorder.stopRecording(modelContext: sharedModelContainer.mainContext)
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                    // App terminating - ensure recording stops (backup)
+                    if recorder.isRecording {
+                        recorder.stopRecording(modelContext: sharedModelContainer.mainContext)
+                    }
+                }
         }
         .modelContainer(sharedModelContainer)
     }
