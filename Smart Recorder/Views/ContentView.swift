@@ -71,11 +71,15 @@ struct ContentView: View {
                 .background(recorder.isRecording ? Color.red : Color.green)
                 .foregroundColor(.white)
                 .clipShape(Capsule())
+                .accessibilityLabel(recorder.isRecording ? "Stop Recording" : "Start Recording")
+                .accessibilityHint(recorder.isRecording ? "Stops the current recording session" : "Starts a new recording session")
 
                 HStack {
                     Label(elapsedString, systemImage: "timer")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                        .accessibilityLabel("Recording time")
+                        .accessibilityValue(recorder.isRecording ? elapsedString : "Not recording")
                     Spacer()
                     Text(recorder.recordingQuality.displayName)
                         .font(.footnote)
@@ -83,6 +87,7 @@ struct ContentView: View {
                         .padding(.vertical, 2)
                         .background(.thinMaterial)
                         .clipShape(Capsule())
+                        .accessibilityLabel("Recording quality: \(recorder.recordingQuality.displayName)")
                 }
                 .padding(.horizontal)
 
@@ -95,6 +100,9 @@ struct ContentView: View {
                 }
                 .frame(height: 6)
                 .padding(.horizontal)
+                .accessibilityLabel("Audio level")
+                .accessibilityValue("\(Int(recorder.audioLevel * 100)) percent")
+                .accessibilityAddTraits(.updatesFrequently)
 
                 List {
                     ForEach(sectionedSessions, id: \.title) { section in
@@ -135,6 +143,18 @@ struct ContentView: View {
                                                             transcriptionStatus.contains("❌") ? .red : .orange)
                                     }
                                     .padding(.vertical, 4)
+                                }
+                                .accessibilityLabel("Recording session from \(session.date.formatted(date: .abbreviated, time: .shortened))")
+                                .accessibilityValue("Duration \(String(format: "%.1f", totalDuration)) seconds, \(totalSegments) segments, \(transcriptionStatus)")
+                                .accessibilityHint("Double tap to view session details")
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        deleteSession(session)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .accessibilityLabel("Delete recording session")
+                                    .accessibilityHint("Permanently deletes this recording and all its segments")
                                 }
                             }
                         }
@@ -177,6 +197,18 @@ struct ContentView: View {
                 Text(alertMessage)
             }
         }
+    }
+
+    private func deleteSession(_ session: RecordingSession) {
+        // Delete associated audio files
+        for segment in session.segments {
+            let fileURL = URL(fileURLWithPath: segment.filePath)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        
+        // Delete from SwiftData (cascade delete will handle segments/transcriptions)
+        modelContext.delete(session)
+        try? modelContext.save()
     }
 }
 

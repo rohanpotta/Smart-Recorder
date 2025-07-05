@@ -88,7 +88,7 @@ extension RecordingSession {
     }
 
     var transcriptionStatus: String {
-        if segments.allSatisfy({ $0.transcription?.statusEnum == .completed }) {
+        if !segments.isEmpty && segments.allSatisfy({ $0.transcription?.statusEnum == .completed }) {
             return "Completed"
         } else if segments.contains(where: { $0.transcription?.statusEnum == .failed }) {
             return "Failed"
@@ -101,6 +101,7 @@ extension RecordingSession {
         segments
             .sorted(by: { $0.startTime < $1.startTime })
             .compactMap { $0.transcription?.text }
+            .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
 }
