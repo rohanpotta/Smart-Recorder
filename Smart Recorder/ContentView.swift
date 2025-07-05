@@ -71,6 +71,13 @@ struct ContentView: View {
                 }
             }
             .padding()
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink(destination: SettingsView()) {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
             .navigationTitle("Smart Recorder")
         }
     }

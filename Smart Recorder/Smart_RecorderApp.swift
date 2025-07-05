@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Foundation
 
 @main
 struct Smart_RecorderApp: App {
@@ -30,9 +31,21 @@ struct Smart_RecorderApp: App {
 
     var body: some Scene {
         WindowGroup {
-                RootView()
-                .environmentObject(recorder)            // pass recorder as EnvironmentObject
-                .environment(\.modelContext, sharedModelContainer.mainContext)  // pass modelContext
+            RootView()
+                .environmentObject(recorder)
+                .onAppear {
+                    OfflineTranscriptionManager.shared.setTranscriber { segment, ctx in
+                        recorder.transcribeSegment(segment, modelContext: ctx)
+                    }
+                    // DEV convenience: pull from env var if key not stored yet
+                    if KeychainHelper.shared.get(key: "assemblyAIKey") == nil,
+                       let envKey = ProcessInfo.processInfo.environment["ASSEMBLY_AI_KEY"],
+                       !envKey.isEmpty {
+                        KeychainHelper.shared.save(value: envKey, for: "assemblyAIKey")
+                    }
+                    OfflineTranscriptionManager.shared.loadPendingSegments(from: sharedModelContainer.mainContext)
+                }
         }
+        .modelContainer(sharedModelContainer)
     }
 }

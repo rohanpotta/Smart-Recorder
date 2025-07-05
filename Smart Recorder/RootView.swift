@@ -11,6 +11,7 @@ struct RootView: View {
     @StateObject var recorder = AudioRecorder()
     @Environment(\.modelContext) private var modelContext
     @State private var showGreet = true
+    @State private var greetDragOffset: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -19,16 +20,38 @@ struct RootView: View {
                 .environmentObject(recorder)
                 .environment(\.modelContext, modelContext)
 
-            // Show greet only if recording NOT active and showGreet is true
             if showGreet && !recorder.isRecording {
                 GreetView()
-                    .transition(.move(edge: .bottom))
+                    .offset(y: greetDragOffset)   // follow the finger
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .bottom),  // comes in from bottom
+                            removal: .move(edge: .top)        // exits upward
+                        )
+                    )
                     .gesture(
-                        DragGesture(minimumDistance: 50, coordinateSpace: .local)
+                        DragGesture()
+                            .onChanged { value in
+                                if value.translation.height < 0 {            // only track upward drag
+                                    greetDragOffset = value.translation.height
+                                }
+                            }
                             .onEnded { value in
-                                if value.translation.height < 0 {
-                                    withAnimation {
-                                        showGreet = false
+                                if value.translation.height < -150 {          // threshold to dismiss
+                                    withAnimation(.easeInOut) {
+                                        greetDragOffset = -UIScreen.main.bounds.height
+                                    }
+                                    // after the slide finishes, remove the view
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                        withAnimation {
+                                            showGreet = false
+                                        }
+                                        greetDragOffset = 0
+                                    }
+                                } else {
+                                    // not far enough – snap back
+                                    withAnimation(.spring()) {
+                                        greetDragOffset = 0
                                     }
                                 }
                             }
@@ -51,4 +74,3 @@ struct RootView: View {
         }
     }
 }
-

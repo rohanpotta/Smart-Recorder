@@ -9,6 +9,7 @@ import AVFoundation
 import SwiftData
 import Combine
 import Speech
+import Security
 
 class AudioRecorder: ObservableObject {
     private let engine = AVAudioEngine()
@@ -20,7 +21,10 @@ class AudioRecorder: ObservableObject {
     private var currentSegmentFileURL: URL?
     private var currentSegmentStartTime: Date?
     private var transcriptionTasks = [UUID: String]()
-    private let assemblyAIKey = "38e350428c5b457894a802dcbf4e0b6f"
+    //      until user stores a valid key via KeychainHelper.
+    private var assemblyAIKey: String {
+        KeychainHelper.shared.get(key: "assemblyAIKey") ?? ""
+    }
     private let urlSession = URLSession.shared
 
     @Published var isRecording = false
@@ -186,6 +190,11 @@ class AudioRecorder: ObservableObject {
     
     func transcribeSegment(_ segment: AudioSegment, modelContext: ModelContext) {
         Task {
+            if await !OfflineTranscriptionManager.shared.isNetworkAvailable {
+                await OfflineTranscriptionManager.shared.enqueue(segment: segment, modelContext: modelContext)
+                return
+            }
+
             let filePath = segment.filePath
             let segmentID = segment.id
 

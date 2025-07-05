@@ -13,6 +13,8 @@ class RecordingSession {
     var id: UUID
     var date: Date
     var filePath: String
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
     @Relationship(deleteRule: .cascade, inverse: \AudioSegment.recordingSession)
     var segments: [AudioSegment]
     
@@ -30,6 +32,8 @@ class AudioSegment {
     var startTime: Date
     var duration: TimeInterval
     var filePath: String
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
     @Relationship var transcription: Transcription?
     var recordingSession: RecordingSession?
 
@@ -46,13 +50,26 @@ class AudioSegment {
 @Model
 class Transcription {
     var id: UUID
-    var text: String
     var status: String
+    var createdAt: Date = Date()
+    @Attribute(.externalStorage)
+    var text: String
+    var remoteID: String?
+    var retryCount: Int = 0
+    var updatedAt: Date = Date()
 
-    init(id: UUID = UUID(), text: String = "", status: String = "pending") {
+    init(
+        id: UUID = UUID(),
+        text: String = "",
+        status: String = "pending",
+        remoteID: String? = nil,
+        retryCount: Int = 0
+    ) {
         self.id = id
         self.text = text
         self.status = status
+        self.remoteID = remoteID
+        self.retryCount = retryCount
     }
 
     var statusEnum: TranscriptionStatus {
@@ -87,4 +104,3 @@ extension RecordingSession {
             .joined(separator: " ")
     }
 }
-
