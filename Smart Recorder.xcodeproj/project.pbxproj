@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		EBD9B76D2E1B3ACC00BA6FD3 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = EBD9B76C2E1B3AC800BA6FD3 /* README.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		EBD9B6742E15AA9E00BA6FD3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		EBD9B6642E15AA9C00BA6FD3 /* Smart Recorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Smart Recorder.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		EBD9B6732E15AA9E00BA6FD3 /* Smart RecorderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Smart RecorderTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		EBD9B67D2E15AA9E00BA6FD3 /* Smart RecorderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Smart RecorderUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBD9B76C2E1B3AC800BA6FD3 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -43,6 +48,11 @@
 		EBD9B6802E15AA9E00BA6FD3 /* Smart RecorderUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Smart RecorderUITests";
+			sourceTree = "<group>";
+		};
+		EBD9B7572E1B399700BA6FD3 /* Docs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Docs;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +85,8 @@
 		EBD9B65B2E15AA9C00BA6FD3 = {
 			isa = PBXGroup;
 			children = (
+				EBD9B76C2E1B3AC800BA6FD3 /* README.md */,
+				EBD9B7572E1B399700BA6FD3 /* Docs */,
 				EBD9B6662E15AA9C00BA6FD3 /* Smart Recorder */,
 				EBD9B6762E15AA9E00BA6FD3 /* Smart RecorderTests */,
 				EBD9B6802E15AA9E00BA6FD3 /* Smart RecorderUITests */,
@@ -109,6 +121,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				EBD9B6662E15AA9C00BA6FD3 /* Smart Recorder */,
+				EBD9B7572E1B399700BA6FD3 /* Docs */,
 			);
 			name = "Smart Recorder";
 			packageProductDependencies = (
@@ -212,6 +225,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EBD9B76D2E1B3ACC00BA6FD3 /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
