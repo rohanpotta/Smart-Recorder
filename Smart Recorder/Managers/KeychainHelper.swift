@@ -1,7 +1,6 @@
 import Foundation
 import Security
 
-/// Minimal wrapper around the iOS Key-chain for small string secrets.
 final class KeychainHelper {
     static let shared = KeychainHelper(); private init() {}
 
@@ -12,7 +11,8 @@ final class KeychainHelper {
             kSecClass as String:            kSecClassGenericPassword,
             kSecAttrAccount as String:      key,
             kSecValueData as String:        data,
-            kSecAttrAccessible as String:   kSecAttrAccessibleAfterFirstUnlock
+            // More secure: only accessible when device is unlocked, stays on this device only
+            kSecAttrAccessible as String:   kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         SecItemDelete(query as CFDictionary)            // overwrite if exists
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
@@ -38,5 +38,22 @@ final class KeychainHelper {
             kSecAttrAccount as String:  key
         ]
         SecItemDelete(query as CFDictionary)
+    }
+    
+    // Optional: Add validation for API keys
+    func isValidAPIKey(_ key: String) -> Bool {
+        // Basic validation - AssemblyAI keys are typically 32+ characters
+        return key.count >= 32 && !key.isEmpty
+    }// Add a method specifically for API tokens with a consistent key name
+    func saveAPIToken(_ token: String) -> Bool {
+        return save(value: token, for: "transcription_api_token")
+    }
+    
+    func getAPIToken() -> String? {
+        return get(key: "transcription_api_token")
+    }
+    
+    func clearAPIToken() {
+        delete(key: "transcription_api_token")
     }
 }

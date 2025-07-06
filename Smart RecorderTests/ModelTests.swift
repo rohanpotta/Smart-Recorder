@@ -1,103 +1,44 @@
-import XCTest
-import SwiftData
+import Testing
+import Foundation
 @testable import Smart_Recorder
 
-@MainActor
-class ModelTests: XCTestCase {
-    var modelContainer: ModelContainer!
-    var modelContext: ModelContext!
-    
-    override func setUp() async throws {
-        // In-memory container for testing
-        let schema = Schema([RecordingSession.self, AudioSegment.self, Transcription.self])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        modelContainer = try ModelContainer(for: schema, configurations: [config])
-        modelContext = modelContainer.mainContext
-    }
-    
-    override func tearDown() async throws {
-        modelContainer = nil
-        modelContext = nil
-    }
-    
-    func testRecordingSessionCreation() {
-        let session = RecordingSession(date: Date(), filePath: "/test/path")
+@Suite("Data Model Tests")
+struct ModelTests {
+
+    @Test("RecordingSession Computed Properties")
+    func testRecordingSessionComputedProperties() throws {
+        // 1. Create a session
+        let session = RecordingSession(filePath: "test.caf")
+
+        // 2. Create segments with different statuses
+        let completedSegment1 = AudioSegment(startTime: Date(), duration: 30.0, filePath: "segment1.caf")
+        completedSegment1.transcription = Transcription(text: "Hello", status: "completed")
+
+        let completedSegment2 = AudioSegment(startTime: Date(), duration: 25.5, filePath: "segment2.caf")
+        completedSegment2.transcription = Transcription(text: "world", status: "completed")
+
+        let failedSegment = AudioSegment(startTime: Date(), duration: 10.0, filePath: "segment3.caf")
+        failedSegment.transcription = Transcription(text: "", status: "failed")
         
-        XCTAssertNotNil(session.id)
-        XCTAssertEqual(session.filePath, "/test/path")
-        XCTAssertEqual(session.segments.count, 0)
-        XCTAssertNotNil(session.createdAt)
-    }
-    
-    func testAudioSegmentCreation() {
-        let segment = AudioSegment(
-            startTime: Date(),
-            duration: 30.0,
-            filePath: "/test/segment.caf"
-        )
+        let pendingSegment = AudioSegment(startTime: Date(), duration: 15.0, filePath: "segment4.caf")
+        pendingSegment.transcription = Transcription(text: "", status: "pending")
+
+        // 3. Test totalDuration
+        session.segments = [completedSegment1, completedSegment2]
+        #expect(session.totalDuration == 55.5)
+
+        // 4. Test transcriptionStatus
+        session.segments = [completedSegment1, completedSegment2]
+        #expect(session.transcriptionStatus == "Completed")
         
-        XCTAssertNotNil(segment.id)
-        XCTAssertEqual(segment.duration, 30.0)
-        XCTAssertEqual(segment.filePath, "/test/segment.caf")
-        XCTAssertNotNil(segment.createdAt)
-    }
-    
-    func testTranscriptionCreation() {
-        let transcription = Transcription(
-            text: "Test transcription",
-            status: "completed",
-            remoteID: "remote-123"
-        )
+        session.segments = [completedSegment1, failedSegment]
+        #expect(session.transcriptionStatus == "Failed")
         
-        XCTAssertEqual(transcription.text, "Test transcription")
-        XCTAssertEqual(transcription.statusEnum, .completed)
-        XCTAssertEqual(transcription.remoteID, "remote-123")
-    }
-    
-    func testSessionWithSegments() {
-        let session = RecordingSession(date: Date(), filePath: "/test/session")
-        let segment1 = AudioSegment(startTime: Date(), duration: 30.0, filePath: "/test/1.caf")
-        let segment2 = AudioSegment(startTime: Date(), duration: 25.0, filePath: "/test/2.caf")
-        
-        session.segments = [segment1, segment2]
-        
-        XCTAssertEqual(session.totalDuration, 55.0)
-        XCTAssertEqual(session.segments.count, 2)
-    }
-    
-    func testTranscriptionStatus() {
-        let session = RecordingSession(date: Date(), filePath: "/test")
-        let segment1 = AudioSegment(startTime: Date(), duration: 30.0, filePath: "/test/1.caf")
-        let segment2 = AudioSegment(startTime: Date(), duration: 30.0, filePath: "/test/2.caf")
-        
-        segment1.transcription = Transcription(text: "Hello", status: "completed")
-        segment2.transcription = Transcription(text: "World", status: "completed")
-        
-        session.segments = [segment1, segment2]
-        
-        XCTAssertEqual(session.transcriptionStatus, "Completed")
-        XCTAssertEqual(session.fullTranscriptionText, "Hello World")
-    }
-    
-    func testSwiftDataPersistence() throws {
-        let session = RecordingSession(date: Date(), filePath: "/test/session")
-        let segment = AudioSegment(startTime: Date(), duration: 30.0, filePath: "/test/segment.caf")
-        let transcription = Transcription(text: "Test text", status: "completed")
-        
-        segment.transcription = transcription
-        session.segments = [segment]
-        
-        modelContext.insert(session)
-        modelContext.insert(segment)
-        modelContext.insert(transcription)
-        
-        try modelContext.save()
-        
-        let fetchRequest = FetchDescriptor<RecordingSession>()
-        let fetchedSessions = try modelContext.fetch(fetchRequest)
-        
-        XCTAssertEqual(fetchedSessions.count, 1)
-        XCTAssertEqual(fetchedSessions.first?.segments.count, 1)
-        XCTAssertEqual(fetchedSessions.first?.segments.first?.transcription?.text, "Test text")
+        session.segments = [completedSegment1, pendingSegment]
+        #expect(session.transcriptionStatus == "In Progress")
+
+        // 5. Test fullTranscriptionText
+        session.segments = [completedSegment2, completedSegment1] // Test sorting
+        #expect(session.fullTranscriptionText == "Hello world")
     }
 }

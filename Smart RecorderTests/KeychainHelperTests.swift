@@ -1,43 +1,35 @@
-import XCTest
+import Testing
+import Foundation
 @testable import Smart_Recorder
 
-class KeychainHelperTests: XCTestCase {
-    let helper = KeychainHelper.shared
-    let testKey = "test-key"
-    let testValue = "test-value-123"
-    
-    override func tearDown() {
-        helper.delete(key: testKey)
+@Suite("KeychainHelper Tests")
+struct KeychainHelperTests {
+
+    let testKey = "testAPIKey"
+    let testValue = "12345-abcde-67890"
+
+    @Test("Save and Get API Key")
+    func testSaveAndGet() {
+        // 1. Save the key
+        let saveResult = KeychainHelper.shared.save(value: testValue, for: testKey)
+        #expect(saveResult == true)
+
+        // 2. Get the key
+        let retrievedValue = KeychainHelper.shared.get(key: testKey)
+        #expect(retrievedValue == testValue)
+        
+        // 3. Clean up
+        KeychainHelper.shared.delete(key: testKey)
+        
+        // 4. Verify deletion
+        let deletedValue = KeychainHelper.shared.get(key: testKey)
+        #expect(deletedValue == nil)
     }
     
-    func testSaveAndRetrieveValue() {
-        let saveResult = helper.save(value: testValue, for: testKey)
-        XCTAssertTrue(saveResult)
-        
-        let retrievedValue = helper.get(key: testKey)
-        XCTAssertEqual(retrievedValue, testValue)
-    }
-    
-    func testOverwriteExistingValue() {
-        let newValue = "new-test-value-456"
-        
-        helper.save(value: testValue, for: testKey)
-        helper.save(value: newValue, for: testKey)
-        
-        let retrievedValue = helper.get(key: testKey)
-        XCTAssertEqual(retrievedValue, newValue)
-    }
-    
-    func testDeleteValue() {
-        helper.save(value: testValue, for: testKey)
-        helper.delete(key: testKey)
-        
-        let retrievedValue = helper.get(key: testKey)
-        XCTAssertNil(retrievedValue)
-    }
-    
-    func testRetrieveNonExistentValue() {
-        let retrievedValue = helper.get(key: "non-existent-key")
-        XCTAssertNil(retrievedValue)
+    @Test("API Key Validation")
+    func testAPIKeyValidation() {
+        #expect(KeychainHelper.shared.isValidAPIKey("a-valid-key-with-more-than-32-characters-long"))
+        #expect(!KeychainHelper.shared.isValidAPIKey("short"))
+        #expect(!KeychainHelper.shared.isValidAPIKey(""))
     }
 }

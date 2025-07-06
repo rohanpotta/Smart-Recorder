@@ -10,13 +10,15 @@ struct ContentView: View {
     @State private var timer: Timer?
     @State private var searchText = ""
     @State private var elapsedSeconds = 0
+    @State private var pausedElapsedSeconds = 0 // Track elapsed time when paused
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var showingDeleteConfirmation = false
     @State private var sessionToDelete: RecordingSession?
 
     private var elapsedString: String {
-        String(format: "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
+        let totalSeconds = elapsedSeconds + pausedElapsedSeconds
+        return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
     private func sectionTitle(for date: Date) -> String {
@@ -47,11 +49,10 @@ struct ContentView: View {
                 // Header Section with Recording Controls
                 VStack(spacing: 16) {
                     // Main Recording Button
-                    Button(recorder.isRecording ? "Stop Recording" : "Start Recording") {
+                    Button(action: {
                         if recorder.isRecording {
                             recorder.stopRecording(modelContext: modelContext)
                         } else {
-                            // Check for API key before starting
                             if KeychainHelper.shared.get(key: "assemblyAIKey")?.isEmpty != false {
                                 alertMessage = "Please set your AssemblyAI API key in Settings before recording."
                                 showingAlert = true
@@ -59,22 +60,55 @@ struct ContentView: View {
                             }
                             recorder.startRecording(modelContext: modelContext)
                         }
+                    }) {
+                        HStack(spacing: 8) {
+                            // Recording indicator
+                            if recorder.isRecording {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 12, height: 12)
+                                    .scaleEffect(recorder.isPaused ? 1.0 : 1.2)
+                                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: recorder.isPaused ? false : recorder.isRecording)
+                            }
+                            
+                            Text(recorder.isRecording ? "Stop Recording" : "Start Recording")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(recorder.isRecording ? Color.red : Color.green)
+                                .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 4)
+                        )
                     }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background {
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(recorder.isRecording ?
-                                  LinearGradient(colors: [.red, .red.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing) :
-                                  LinearGradient(colors: [.green, .green.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .shadow(color: recorder.isRecording ? .red.opacity(0.3) : .green.opacity(0.3), radius: 8, x: 0, y: 4)
-                    }
-                    .scaleEffect(recorder.isRecording ? 1.02 : 1.0)
-                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recorder.isRecording)
                     .accessibilityLabel(recorder.isRecording ? "Stop Recording" : "Start Recording")
                     .accessibilityHint(recorder.isRecording ? "Stops the current recording session" : "Starts a new recording session")
+                    
+                    //Pause/Resume Button (only show when recording)
+                    if recorder.isRecording {
+                        Button(action: {
+                            if recorder.isPaused {
+                                recorder.resumeRecording()
+                            } else {
+                                recorder.pauseRecording()
+                            }
+                        }) {
+                            Text(recorder.isPaused ? "Resume" : "Pause")
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(recorder.isPaused ? Color.blue : Color.orange)
+                                        .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+                                )
+                        }
+                        .accessibilityLabel(recorder.isPaused ? "Resume Recording" : "Pause Recording")
+                        .accessibilityHint(recorder.isPaused ? "Resumes the current recording session" : "Pauses the current recording session")
+                    }
 
                     // Recording Info Row
                     HStack {
@@ -191,21 +225,46 @@ struct ContentView: View {
             .navigationTitle("Smart Recorder")
             .navigationBarTitleDisplayMode(.large)
             .onChange(of: recorder.isRecording) {
-                if recorder.isRecording {
-                    elapsedSeconds = 0
-                    timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                        elapsedSeconds += 1
-                    }
-                } else {
+                if !recorder.isRecording {
+                    // Recording stopped - invalidate timer and reset counters
                     timer?.invalidate()
                     timer = nil
+                    elapsedSeconds = 0
+                    pausedElapsedSeconds = 0
+                    // Reset audio level after a brief delay to allow final UI update
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        recorder.audioLevel = 0
+                    }
+                } else {
+                    // Recording started - reset counters for new session
+                    elapsedSeconds = 0
+                    pausedElapsedSeconds = 0
+                    // Start timer if not paused
+                    if !recorder.isPaused {
+                        startTimer()
+                    }
                 }
             }
-            .onDisappear {
-                timer?.invalidate()
+            .onChange(of: recorder.isPaused) {
+                if recorder.isRecording {
+                    if recorder.isPaused {
+                        // Paused - stop timer and preserve elapsed time
+                        timer?.invalidate()
+                        timer = nil
+                        pausedElapsedSeconds += elapsedSeconds
+                        elapsedSeconds = 0
+                    } else {
+                        // Resumed - start timer again
+                        startTimer()
+                    }
+                }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .microphonePermissionDenied)) { _ in
-                alertMessage = "Microphone permission is required to record audio. Please enable it in Settings."
+            .onReceive(NotificationCenter.default.publisher(for: .microphonePermissionDenied)) { notification in
+                if let message = notification.userInfo?["message"] as? String {
+                    alertMessage = message
+                } else {
+                    alertMessage = "Microphone permission is required to record audio. Please enable it in Settings."
+                }
                 showingAlert = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .storageLowWarning)) { _ in
@@ -235,7 +294,21 @@ struct ContentView: View {
                 Text("Are you sure you want to delete this recording session? This action cannot be undone.")
             }
         }
+        .onDisappear {
+            // Clean up timer when view disappears
+            timer?.invalidate()
+            timer = nil
+        }
     }
+
+    private func startTimer() {
+        timer?.invalidate() // Ensure no duplicate timers
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            elapsedSeconds += 1
+        }
+    }
+
+
 
     private func deleteSession(_ session: RecordingSession) {
         // Delete associated audio files (all segments)
@@ -327,7 +400,7 @@ struct SessionRowView: View {
                             Image(systemName: "waveform")
                                 .foregroundColor(.purple)
                                 .font(.caption)
-                            Text("\(totalSegments) segments")
+                            Text(totalSegments == 1 ? "1 segment" : "\(totalSegments) segments")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                         }

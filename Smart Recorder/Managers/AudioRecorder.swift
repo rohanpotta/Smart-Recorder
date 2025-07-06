@@ -1,10 +1,3 @@
-//
-//  AudioRecorder.swift
-//  Smart Recorder
-//
-//  Created by Rohan Potta on 7/2/25.
-//
-
 import AVFoundation
 import SwiftData
 import Combine
@@ -41,7 +34,7 @@ class AudioRecorder: ObservableObject {
     private var currentSegmentFileURL: URL?
     private var currentSegmentStartTime: Date?
     private var transcriptionTasks = [UUID: String]()
-    //      until user stores a valid key via KeychainHelper.
+    
     private var assemblyAIKey: String {
         KeychainHelper.shared.get(key: "assemblyAIKey") ?? ""
     }
@@ -52,6 +45,7 @@ class AudioRecorder: ObservableObject {
     @Published var recordingQuality: RecordingQuality = .high
     @Published var availableStorageGB: Double = 0
     @Published var isStorageLow: Bool = false
+    @Published var isPaused = false
     private let minimumStorageGB: Double = 1.0  // 1GB minimum
 
     init() {
@@ -77,8 +71,20 @@ class AudioRecorder: ObservableObject {
     }
 
     func startRecording(modelContext: ModelContext) {
-        AVAudioApplication.requestRecordPermission { granted in
-            guard granted else {
+        guard KeychainHelper.shared.isValidAPIKey(assemblyAIKey) else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .microphonePermissionDenied, // Re-using this notification for simplicity
+                    object: nil, 
+                    userInfo: ["message": "Please set a valid AssemblyAI API key in Settings before recording."]
+                )
+            }
+            print("🚨 Recording stopped: Invalid or missing AssemblyAI API key.")
+            return
+        }
+
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            guard let self = self, granted else {
                 print("Microphone permission denied")
                 return
             }
@@ -106,10 +112,9 @@ class AudioRecorder: ObservableObject {
                     
                     self.monitorStorageDuringRecording()
 
-                    DispatchQueue.main.async {
+                    await MainActor.run {
                         self.isRecording = true
                     }
-
                 } catch {
                     print("Failed to start recording: \(error)")
                 }
@@ -152,7 +157,8 @@ class AudioRecorder: ObservableObject {
         }
 
         // Schedule timer to split after 30 seconds
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.segmentTimer?.invalidate()
             self.segmentTimer = Timer.scheduledTimer(withTimeInterval: self.segmentDuration, repeats: false) { _ in
                 self.finishCurrentSegmentAndStartNew(modelContext: modelContext)
@@ -171,7 +177,7 @@ class AudioRecorder: ObservableObject {
         // Calculate segment duration
         let segmentDuration = Date().timeIntervalSince(segmentStart)
 
-        // Create and add segment
+        // Create and add segment WITHOUT auto-creating transcription
         let segment = AudioSegment(startTime: segmentStart, duration: segmentDuration, filePath: fileURL.path)
         session.segments.append(segment)
 
@@ -184,7 +190,7 @@ class AudioRecorder: ObservableObject {
         do {
             try self.encryptAudioFile(at: fileURL)
         } catch {
-            print("⚠️ Failed to encrypt audio file: \(error)")
+            print("🚨 Failed to encrypt audio file: \(error)")
         }
 
         print("Saved segment starting at \(segmentStart) duration: \(segmentDuration)")
@@ -206,7 +212,8 @@ class AudioRecorder: ObservableObject {
         segmentTimer?.invalidate()
         segmentTimer = nil
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isRecording = false
 
             guard let session = self.currentSession else {
@@ -247,12 +254,12 @@ class AudioRecorder: ObservableObject {
     }
     
     func transcribeSegment(_ segment: AudioSegment, modelContext: ModelContext) {
+        if !OfflineTranscriptionManager.shared.isNetworkAvailable {
+            OfflineTranscriptionManager.shared.enqueue(segment: segment, modelContext: modelContext)
+            return
+        }
+        
         Task {
-            if await !OfflineTranscriptionManager.shared.isNetworkAvailable {
-                await OfflineTranscriptionManager.shared.enqueue(segment: segment, modelContext: modelContext)
-                return
-            }
-
             let filePath = segment.filePath
             let segmentID = segment.id
 
@@ -281,19 +288,19 @@ class AudioRecorder: ObservableObject {
             }
 
             // Fallback after 5 failed attempts
+            print("🔴 ASSEMBLY AI FAILED! NOW ATTEMPTING LOCAL FALLBACK. 🔴")
             print("🔁 Falling back to local transcription for segment \(segmentID)")
             do {
                 let transcriptText = try await transcribeLocal(URL(fileURLWithPath: filePath))
                 await applyTranscription(transcriptText, to: segment, modelContext: modelContext)
                 print("✅ Local transcription succeeded for segment \(segmentID)")
             } catch {
+                print("❌ Local transcription failed for segment \(segmentID): \(error.localizedDescription)")
                 await markTranscriptionFailed(for: segment, modelContext: modelContext)
-                print("❌ Local transcription also failed for segment \(segmentID): \(error.localizedDescription)")
             }
         }
     }
 
-    
     func uploadAudioFile(_ fileURL: URL) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.assemblyai.com/v2/upload")!)
         request.httpMethod = "POST"
@@ -350,22 +357,34 @@ class AudioRecorder: ObservableObject {
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                throw NSError(domain: "TranscriptionPollFailed", code: 1, userInfo: nil)
+                let errorBody = String(data: data, encoding: .utf8) ?? "No response body"
+                print("🚨 Transcription poll failed with status \((response as? HTTPURLResponse)?.statusCode ?? 0): \(errorBody)")
+                throw NSError(domain: "TranscriptionPollFailed", code: 1, userInfo: [NSLocalizedDescriptionKey: "Polling failed: \(errorBody)"])
             }
 
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if let errorMessage = json?["error"] as? String {
+                print("🚨 Transcription API returned an error: \(errorMessage)")
+                throw NSError(domain: "TranscriptionAPIError", code: 2, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+            }
+
             if let status = json?["status"] as? String {
                 switch status {
                 case "completed":
-                    return json?["text"] as? String ?? ""
+                    if let text = json?["text"] as? String {
+                        return text
+                    } else {
+                        throw NSError(domain: "TranscriptionResultInvalid", code: 1, userInfo: [NSLocalizedDescriptionKey: "Transcription completed but no text found."])
+                    }
                 case "error":
-                    throw NSError(domain: "TranscriptionError", code: 1, userInfo: nil)
-                default:
-                    // Still processing; wait before polling again
-                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                    let errorMessage = json?["error"] as? String ?? "Unknown transcription error from API."
+                    print("🚨 Transcription failed with API error: \(errorMessage)")
+                    throw NSError(domain: "TranscriptionAPIError", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                default: 
+                    try await Task.sleep(nanoseconds: 3_000_000_000) 
                 }
             } else {
-                throw NSError(domain: "InvalidResponse", code: 1, userInfo: nil)
+                throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not decode transcription status."])
             }
         }
     }
@@ -388,14 +407,40 @@ class AudioRecorder: ObservableObject {
     func pauseRecording() {
         if engine.isRunning {
             engine.pause()
-            print("⏸️ Recording paused")
+            
+            engine.inputNode.removeTap(onBus: 0)
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.isPaused = true
+            }
+            print("⏸️ Recording paused & audio writing stopped")
         }
     }
 
     func resumeRecording() {
         do {
             try engine.start()
-            print("▶️ Recording resumed")
+            
+            let format = engine.inputNode.outputFormat(forBus: 0)
+            engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                do {
+                    try self.audioFile?.write(from: buffer)
+                } catch {
+                    print("Error writing buffer: \(error)")
+                }
+                if let channelData = buffer.floatChannelData?[0] {
+                    let values = UnsafeBufferPointer(start: channelData,
+                                                      count: Int(buffer.frameLength))
+                    let rms = sqrt(values.map { $0 * $0 }.reduce(0, +) / Float(buffer.frameLength))
+                    let level = min(max(rms * 20, 0), 1)
+                    DispatchQueue.main.async { self.audioLevel = level }
+                }
+            }
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.isPaused = false
+            }
+            print("▶️ Recording resumed & audio writing re-started")
         } catch {
             print("Failed to resume recording: \(error)")
         }
@@ -455,11 +500,15 @@ class AudioRecorder: ObservableObject {
 
     @MainActor
     func markTranscriptionFailed(for segment: AudioSegment, modelContext: ModelContext) {
-        segment.transcription?.status = "failed"
+        if segment.transcription == nil {
+            let transcription = Transcription(text: "", status: "failed")
+            segment.transcription = transcription
+            modelContext.insert(transcription)
+        } else {
+            segment.transcription?.status = "failed"
+        }
         try? modelContext.save()
     }
-    
-    // MARK: - Storage Management
     
     func checkStorageSpace() async throws {
         let fileManager = FileManager.default
@@ -468,27 +517,26 @@ class AudioRecorder: ObservableObject {
         if let freeBytes = systemAttributes[.systemFreeSize] as? NSNumber {
             let freeGB = Double(freeBytes.int64Value) / (1024 * 1024 * 1024)
             
-            DispatchQueue.main.async { [weak self] in
+            let minimumStorage = self.minimumStorageGB
+            
+            await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.availableStorageGB = freeGB
-                self.isStorageLow = freeGB < self.minimumStorageGB
+                self.isStorageLow = freeGB < minimumStorage
             }
         }
     }
 
-    private func encryptAudioFile(at url: URL) throws {
-        // Check if file exists before trying to encrypt
+    func encryptAudioFile(at url: URL) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
             print("⚠️ Audio file not found for encryption: \(url.path)")
             return
         }
         
-        // Enable file protection (encryption at rest) and exclude from backup using FileManager
         try FileManager.default.setAttributes([
             FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
         ], ofItemAtPath: url.path)
         
-        // Exclude from backup using FileManager as well
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true
         var mutableURL = url
@@ -496,9 +544,8 @@ class AudioRecorder: ObservableObject {
         
         print("🔒 Audio file encrypted and excluded from backup: \(url.lastPathComponent)")
     }
-    
-    // Monitor storage during recording
-    private func monitorStorageDuringRecording() {
+
+    func monitorStorageDuringRecording() {
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] timer in
             guard let self = self, self.isRecording else {
                 timer.invalidate()
@@ -509,7 +556,6 @@ class AudioRecorder: ObservableObject {
                 try? await self.checkStorageSpace()
                 if self.isStorageLow {
                     DispatchQueue.main.async {
-                        // Stop recording if storage critically low
                         NotificationCenter.default.post(name: .storageCriticalWarning, object: nil)
                     }
                 }

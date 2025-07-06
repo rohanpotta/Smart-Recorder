@@ -37,13 +37,13 @@ class AudioSegment {
     @Relationship var transcription: Transcription?
     var recordingSession: RecordingSession?
 
-    init(id: UUID = UUID(), startTime: Date, duration: TimeInterval, filePath: String, transcription: Transcription = Transcription(), recordingSession: RecordingSession? = nil) {
+    init(id: UUID = UUID(), startTime: Date, duration: TimeInterval, filePath: String, recordingSession: RecordingSession? = nil) {
         self.id = id
         self.startTime = startTime
         self.duration = duration
         self.filePath = filePath
-        self.transcription = transcription
         self.recordingSession = recordingSession
+        // DON'T create transcription here - causes SwiftData crash
     }
 }
 

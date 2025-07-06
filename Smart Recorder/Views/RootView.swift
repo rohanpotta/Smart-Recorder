@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct RootView: View {
-    @StateObject var recorder = AudioRecorder()
+    @EnvironmentObject var recorder: AudioRecorder  // Use the shared instance from App
     @Environment(\.modelContext) private var modelContext
     @State private var showGreet = true
     @State private var greetDragOffset: CGFloat = 0

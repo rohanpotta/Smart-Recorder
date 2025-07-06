@@ -9,19 +9,21 @@ import Foundation
 import Network
 import SwiftData
 
-@MainActor
 class OfflineTranscriptionManager: ObservableObject {
     static let shared = OfflineTranscriptionManager()
     
     private let monitor = NWPathMonitor()
-    private var isConnected = false
+    @Published private var isConnected = false
     private var queue: [(AudioSegment, ModelContext)] = []
     private var transcriber: ((AudioSegment, ModelContext) -> Void)?
     
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
-                self?.updateConnectivity(path.status == .satisfied)
+            DispatchQueue.main.async {
+                self?.isConnected = path.status == .satisfied
+                if self?.isConnected == true {
+                    self?.processQueue()
+                }
             }
         }
         monitor.start(queue: DispatchQueue(label: "OfflineTranscriptionManager.Network"))
@@ -38,11 +40,6 @@ class OfflineTranscriptionManager: ObservableObject {
         if !queue.contains(where: { $0.0.id == segment.id }) {
             queue.append((segment, modelContext))
         }
-    }
-    
-    private func updateConnectivity(_ connected: Bool) {
-        isConnected = connected
-        if connected { processQueue() }
     }
     
     private func processQueue() {
