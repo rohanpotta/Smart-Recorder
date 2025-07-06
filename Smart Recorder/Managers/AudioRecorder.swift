@@ -10,6 +10,7 @@ import SwiftData
 import Combine
 import Speech
 import Security
+import Foundation
 
 enum RecordingQuality: String, CaseIterable, Identifiable {
     case low, medium, high
@@ -49,7 +50,10 @@ class AudioRecorder: ObservableObject {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0
     @Published var recordingQuality: RecordingQuality = .high
-    
+    @Published var availableStorageGB: Double = 0
+    @Published var isStorageLow: Bool = false
+    private let minimumStorageGB: Double = 1.0  // 1GB minimum
+
     init() {
         // Observe audio interruptions
         NotificationCenter.default.addObserver(
@@ -81,6 +85,14 @@ class AudioRecorder: ObservableObject {
 
             Task {
                 do {
+                    try await self.checkStorageSpace()
+                    if self.isStorageLow {
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: .storageLowWarning, object: nil)
+                        }
+                        return
+                    }
+
                     try self.session.setCategory(.record, options: [.mixWithOthers, .allowBluetooth])
                     try self.session.setActive(true)
 
@@ -91,6 +103,8 @@ class AudioRecorder: ObservableObject {
                     self.engine.prepare()
                     try self.engine.start()
                     print("Engine started")
+                    
+                    self.monitorStorageDuringRecording()
 
                     DispatchQueue.main.async {
                         self.isRecording = true
@@ -114,7 +128,7 @@ class AudioRecorder: ObservableObject {
         var fileSettings = format.settings
         fileSettings[AVSampleRateKey as String] = recordingQuality.sampleRate
         self.audioFile = try AVAudioFile(forWriting: fileURL, settings: fileSettings)
-
+        
         inputNode.removeTap(onBus: 0) // Remove previous tap if any
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             do {
@@ -166,6 +180,13 @@ class AudioRecorder: ObservableObject {
         modelContext.insert(segment)
         try? modelContext.save()
 
+        // Encrypt the completed audio file
+        do {
+            try self.encryptAudioFile(at: fileURL)
+        } catch {
+            print("⚠️ Failed to encrypt audio file: \(error)")
+        }
+
         print("Saved segment starting at \(segmentStart) duration: \(segmentDuration)")
 
         // **Call transcription here**
@@ -199,6 +220,13 @@ class AudioRecorder: ObservableObject {
                 let segment = AudioSegment(startTime: segmentStart, duration: segmentDuration, filePath: fileURL.path)
                 session.segments.append(segment)
                 modelContext.insert(segment)
+                
+                // Encrypt the final segment
+                do {
+                    try self.encryptAudioFile(at: fileURL)
+                } catch {
+                    print("⚠️ Failed to encrypt final audio file: \(error)")
+                }
             }
 
             modelContext.insert(session)
@@ -429,5 +457,63 @@ class AudioRecorder: ObservableObject {
     func markTranscriptionFailed(for segment: AudioSegment, modelContext: ModelContext) {
         segment.transcription?.status = "failed"
         try? modelContext.save()
+    }
+    
+    // MARK: - Storage Management
+    
+    func checkStorageSpace() async throws {
+        let fileManager = FileManager.default
+        let systemAttributes = try fileManager.attributesOfFileSystem(forPath: NSHomeDirectory())
+        
+        if let freeBytes = systemAttributes[.systemFreeSize] as? NSNumber {
+            let freeGB = Double(freeBytes.int64Value) / (1024 * 1024 * 1024)
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.availableStorageGB = freeGB
+                self.isStorageLow = freeGB < self.minimumStorageGB
+            }
+        }
+    }
+
+    private func encryptAudioFile(at url: URL) throws {
+        // Check if file exists before trying to encrypt
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("⚠️ Audio file not found for encryption: \(url.path)")
+            return
+        }
+        
+        // Enable file protection (encryption at rest) and exclude from backup using FileManager
+        try FileManager.default.setAttributes([
+            FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
+        ], ofItemAtPath: url.path)
+        
+        // Exclude from backup using FileManager as well
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        var mutableURL = url
+        try mutableURL.setResourceValues(resourceValues)
+        
+        print("🔒 Audio file encrypted and excluded from backup: \(url.lastPathComponent)")
+    }
+    
+    // Monitor storage during recording
+    private func monitorStorageDuringRecording() {
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] timer in
+            guard let self = self, self.isRecording else {
+                timer.invalidate()
+                return
+            }
+            
+            Task {
+                try? await self.checkStorageSpace()
+                if self.isStorageLow {
+                    DispatchQueue.main.async {
+                        // Stop recording if storage critically low
+                        NotificationCenter.default.post(name: .storageCriticalWarning, object: nil)
+                    }
+                }
+            }
+        }
     }
 }
